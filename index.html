@@ -77,7 +77,9 @@ video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
   var stream=null,timer=null,t0=0,S=[],lastBpm=null,final=null,DUR=30000;
 
   function setState(t){$('state').textContent=t}
-  function setState(t){$('state').textContent=t}
+  
+});// ← СЮДА вставьте весь код из send_snippet.js
+function setState(t){$('state').textContent=t}
 
   /* Вставьте этот код внутрь скрипта страницы, сразу после строки
    function setState(t){$('state').textContent=t}
@@ -108,8 +110,6 @@ $('send').addEventListener('click', function () {
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function () { log('Отправлено ✓'); })
     .catch(function (e) { log('Ошибка: ' + e.message); });
-});// ← СЮДА вставьте весь код из send_snippet.js
-
 })();      // ← это конец скрипта, вставлять нужно до него
 
   async function start(){
