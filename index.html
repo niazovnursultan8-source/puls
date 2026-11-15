@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Пульс по камере</title>
+<style>
+:root{--bg:#10131a;--panel:#181c26;--line:#2a3040;--text:#eceff4;--mut:#8b94a7;--red:#ff4d5e;--ok:#4fd1a1;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:560px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 18px max(28px,env(safe-area-inset-bottom))}
+h1{font-size:22px;margin:4px 0 4px;font-weight:650}
+.sub{color:var(--mut);margin:0 0 18px}
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+.bpm{display:flex;align-items:baseline;gap:10px}
+#bpm{font-size:76px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;color:var(--red)}
+.unit{color:var(--mut)}
+#state{margin-left:auto;font-size:14px;color:var(--mut);text-align:right}
+canvas#wave{width:100%;height:130px;display:block;margin-top:10px;background:#0c0f15;border-radius:8px}
+.bar{height:6px;background:var(--line);border-radius:3px;margin-top:14px;overflow:hidden}
+#prog{height:100%;width:0;background:var(--red);transition:width .3s}
+.row{display:flex;gap:10px;margin-top:14px}
+button{flex:1;padding:14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;font-weight:600;cursor:pointer}
+button.main{background:var(--red);border-color:var(--red);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.steps{margin:20px 0 0;padding-left:20px;color:var(--mut)}
+.steps li{margin:4px 0}
+details{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+summary{cursor:pointer;font-weight:600}
+label{display:block;margin:12px 0 4px;color:var(--mut);font-size:14px}
+input{width:100%;padding:11px;border-radius:8px;border:1px solid var(--line);background:#0c0f15;color:var(--text);font:inherit}
+#log{margin-top:10px;font-size:14px;color:var(--mut);min-height:20px}
+video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
+.note{margin-top:18px;font-size:13px;color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Пульс по камере</h1>
+  <p class="sub">Прижмите палец к камере — страница считает пульс по колебаниям яркости.</p>
+
+  <section class="hero">
+    <div class="bpm"><span id="bpm">--</span><span class="unit">уд/мин</span><span id="state">Нажмите «Начать»</span></div>
+    <canvas id="wave" width="600" height="130" aria-label="График пульса"></canvas>
+    <div class="bar"><div id="prog"></div></div>
+    <div class="row">
+      <button id="start" class="main">Начать</button>
+      <button id="stop" disabled>Стоп</button>
+    </div>
+  </section>
+
+  <ol class="steps">
+    <li>Закройте пальцем камеру и вспышку одновременно.</li>
+    <li>Прижимайте легко, без сильного нажима, и не двигайтесь.</li>
+    <li>Подождите 30 секунд до итогового результата.</li>
+  </ol>
+
+  <details>
+    <summary>Отправка в TARS Core</summary>
+    <label for="url">Адрес приёма данных (POST, JSON)</label>
+    <input id="url" type="url" placeholder="https://192.168.1.10:8000/api/pulse" autocomplete="off">
+    <div class="row"><button id="send" disabled>Отправить результат</button></div>
+    <div id="log"></div>
+  </details>
+
+  <p class="note">Это демонстрация, а не медицинский прибор. Точность зависит от камеры и освещения.</p>
+</main>
+<video id="vid" playsinline muted></video>
+
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var vid=$('vid'),wave=$('wave'),wctx=wave.getContext('2d');
+  var cv=document.createElement('canvas');cv.width=cv.height=24;
+  var cx=cv.getContext('2d',{willReadFrequently:true});
+  var stream=null,timer=null,t0=0,S=[],lastBpm=null,final=null,DUR=30000;
+
+  function setState(t){$('state').textContent=t}
+
+  async function start(){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+      setState('Нужен HTTPS для доступа к камере');return;
+    }
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:320},height:{ideal:240},frameRate:{ideal:30}},audio:false});
+    }catch(e){setState('Нет доступа к камере');return}
+    vid.srcObject=stream;await vid.play();
+    var tr=stream.getVideoTracks()[0];
+    try{
+      var cap=tr.getCapabilities&&tr.getCapabilities();
+      if(cap&&cap.torch){await tr.applyConstraints({advanced:[{torch:true}]})}
+      else setState('Вспышка недоступна: подсветите палец фонариком');
+    }catch(e){}
+    S=[];lastBpm=null;final=null;t0=performance.now();
+    $('bpm').textContent='--';$('prog').style.width='0';
+    $('start').disabled=true;$('stop').disabled=false;$('send').disabled=true;
+    timer=setInterval(tick,33);
+  }
+
+  function stop(){
+    clearInterval(timer);timer=null;
+    if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
+    $('start').disabled=false;$('stop').disabled=true;
+    if(final)$('send').disabled=false;
+  }
+
+  function tick(){
+    var now=performance.now();
+    cx.drawImage(vid,0,0,24,24);
+    var d=cx.getImageData(0,0,24,24).data,r=0,g=0,n=d.length/4;
+    for(var i=0;i<d.length;i+=4){r+=d[i];g+=d[i+1]}
+    r/=n;g/=n;
+    var finger=r>90&&r/(g+1)>1.7;
+    if(!finger){S=[];setState('Закройте камеру пальцем');drawWave(null);return}
+    S.push({t:now,v:r});
+    while(S.length&&now-S[0].t>12000)S.shift();
+    var el=now-t0;
+    $('prog').style.width=Math.min(100,el/DUR*100)+'%';
+    if(S.length<60){setState('Определяю сигнал…');return}
+    var f=filt();analyze(f);drawWave(f);
+    if(el>=DUR&&lastBpm){final=lastBpm;setState('Готово');stop()}
+  }
+
+  function mavg(a,w){
+    var o=new Array(a.length),s=0,q=[];
+    for(var i=0;i<a.length;i++){s+=a[i];q.push(a[i]);if(q.length>w)s-=q.shift();o[i]=s/q.length}
+    return o;
+  }
+
+  function filt(){
+    var n=S.length,dur=(S[n-1].t-S[0].t)/1000,fps=n/dur;
+    var v=S.map(function(p){return p.v});
+    var a=mavg(v,Math.max(2,Math.round(fps*0.12)));
+    var b=mavg(v,Math.max(6,Math.round(fps*0.9)));
+    return a.map(function(x,i){return -(x-b[i])});
+  }
+
+  function analyze(f){
+    var n=S.length,fps=n/((S[n-1].t-S[0].t)/1000);
+    var skip=Math.round(fps*1);
+    var m=0,sd=0,c=f.length-skip;
+    for(var i=skip;i<f.length;i++)m+=f[i];m/=c;
+    for(i=skip;i<f.length;i++)sd+=(f[i]-m)*(f[i]-m);
+    sd=Math.sqrt(sd/c);
+    if(sd<0.05){setState('Сигнал слабый, прижмите палец');return}
+    var minGap=Math.round(fps*0.33),peaks=[];
+    for(i=skip+1;i<f.length-1;i++){
+      if(f[i]>f[i-1]&&f[i]>=f[i+1]&&f[i]>m+0.4*sd){
+        if(peaks.length&&i-peaks[peaks.length-1]<minGap){
+          if(f[i]>f[peaks[peaks.length-1]])peaks[peaks.length-1]=i;
+        }else peaks.push(i);
+      }
+    }
+    if(peaks.length<4){setState('Определяю пульс…');return}
+    var iv=[];
+    for(i=1;i<peaks.length;i++)iv.push((S[peaks[i]].t-S[peaks[i-1]].t)/1000);
+    iv.sort(function(a,b){return a-b});
+    var med=iv[Math.floor(iv.length/2)],bpm=Math.round(60/med);
+    if(bpm<40||bpm>190){setState('Сигнал нестабилен');return}
+    lastBpm=lastBpm?Math.round(lastBpm*0.7+bpm*0.3):bpm;
+    $('bpm').textContent=lastBpm;
+    setState('Измеряю…');
+  }
+
+  function drawWave(f){
+    var W=wave.width,H=wave.height;
+    wctx.clearRect(0,0,W,H);
+    if(!f||f.length<10)return;
+    var n=f.length,show=Math.min(n,Math.round(n*6/12));
+    var seg=f.slice(n-show),mx=0;
+    seg.forEach(function(x){mx=Math.max(mx,Math.abs(x))});
+    mx=mx||1;
+    wctx.strokeStyle='#ff4d5e';wctx.lineWidth=2.5;wctx.lineJoin='round';wctx.beginPath();
+    seg.forEach(function(x,i){
+      var px=i/(seg.length-1)*W,py=H/2-(x/mx)*(H/2-10);
+      i?wctx.lineTo(px,py):wctx.moveTo(px,py);
+    });
+    wctx.stroke();
+  }
+
+  async function send(){
+    var url=$('url').value.trim(),log=$('log');
+    if(!url){log.textContent='Укажите адрес TARS Core.';return}
+    log.textContent='Отправляю…';
+    try{
+      var r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({bpm:final,source:'camera-ppg',ts:new Date().toISOString()})});
+      log.textContent=r.ok?'Отправлено: '+final+' уд/мин':'Сервер ответил ошибкой '+r.status;
+    }catch(e){log.textContent='Не удалось отправить. Проверьте адрес и CORS на сервере.'}
+  }
+
+  $('start').onclick=start;$('stop').onclick=stop;$('send').onclick=send;
+  try{var u=localStorage.getItem('tars_url');if(u)$('url').value=u}catch(e){}
+  $('url').onchange=function(){try{localStorage.setItem('tars_url',this.value)}catch(e){}};
+})();
+</script>
+</body>
+</html>
