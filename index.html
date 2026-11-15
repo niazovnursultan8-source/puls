@@ -77,41 +77,6 @@ video{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
   var stream=null,timer=null,t0=0,S=[],lastBpm=null,final=null,DUR=30000;
 
   function setState(t){$('state').textContent=t}
-  
-});// ← СЮДА вставьте весь код из send_snippet.js
-function setState(t){$('state').textContent=t}
-
-  /* Вставьте этот код внутрь скрипта страницы, сразу после строки
-   function setState(t){$('state').textContent=t}
-   (до закрывающего "})();").
-   Используются переменные страницы: $, lastBpm, final.
-   Кнопку #send нужно включать (disabled = false), когда есть результат. */
-
-function log(t){ $('log').textContent = t; }
-
-$('send').addEventListener('click', function () {
-  var url = $('url').value.trim();
-  if (!url) { log('Укажите адрес сервера'); return; }
-
-  var bpm = (typeof final === 'number') ? final : lastBpm;
-  if (typeof bpm !== 'number') { log('Пока нет результата'); return; }
-
-  log('Отправка…');
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      bpm: Math.round(bpm),
-      final: typeof final === 'number',
-      ts: Date.now(),
-      source: 'puls-camera'
-    })
-  })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function () { log('Отправлено ✓'); })
-    .catch(function (e) { log('Ошибка: ' + e.message); });
-})();      // ← это конец скрипта, вставлять нужно до него
-
   async function start(){
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
       setState('Нужен HTTPS для доступа к камере');return;
